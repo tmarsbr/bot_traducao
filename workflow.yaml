@@ -1,0 +1,71 @@
+# GitHub Actions Workflow para tradução automática de vídeos
+# Este workflow é acionado automaticamente quando vídeos são adicionados a videos_input/
+
+name: Tradução Automática de Vídeos
+
+on:
+  push:
+    paths:
+      - 'videos_input/**'
+  workflow_dispatch:
+    inputs:
+      target_language:
+        description: 'Idioma alvo (en, es, fr, etc)'
+        required: true
+        default: 'en'
+      embed_subs:
+        description: 'Embutir legendas no vídeo?'
+        required: false
+        type: boolean
+
+jobs:
+  translate_videos:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout do repositório
+      uses: actions/checkout@v3
+    
+    - name: Instalar FFmpeg
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ffmpeg
+    
+    - name: Configurar Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Instalar dependências
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Criar arquivo .env
+      env:
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        GOOGLE_CLOUD_PROJECT: ${{ secrets.GOOGLE_CLOUD_PROJECT }}
+      run: |
+        echo "GEMINI_API_KEY=$GEMINI_API_KEY" > .env
+        echo "GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT" >> .env
+    
+    - name: Traduzir vídeos
+      run: |
+        python video_translator.py \
+          --input_dir videos_input/ \
+          --target_language ${{ github.event.inputs.target_language || 'en' }} \
+          ${{ github.event.inputs.embed_subs && '--embed_subs' || '' }}
+    
+    - name: Upload resultados
+      if: success()
+      uses: actions/upload-artifact@v3
+      with:
+        name: translated_videos
+        path: videos_output/
+    
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: translation_logs
+        path: logs/
