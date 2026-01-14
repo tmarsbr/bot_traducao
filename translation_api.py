@@ -10,6 +10,8 @@ from config import (
     GEMINI_MODEL,
     MAX_RETRIES,
     RETRY_DELAY,
+    BATCH_SIZE,
+    SKIP_BLOCKED_CONTENT,
 )
 from alive_progress import alive_bar
 
@@ -39,7 +41,23 @@ class GeminiTranslator:
         
         if GEMINI_AVAILABLE:
             genai.configure(api_key=GEMINI_API_KEY)
-            self.model = genai.GenerativeModel(GEMINI_MODEL)
+            
+            # Configuração de segurança para evitar bloqueio de conteúdo legítimo
+            from google.generativeai.types import HarmCategory, HarmBlockThreshold, RequestOptions
+            
+            self.api_options = RequestOptions(timeout=600) # 10 minutos de timeout
+            
+            safety_settings = {
+                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+            }
+            
+            self.model = genai.GenerativeModel(
+                model_name=GEMINI_MODEL,
+                safety_settings=safety_settings
+            )
         else:
             raise ImportError("google-generativeai não está instalado")
     
@@ -55,18 +73,43 @@ class GeminiTranslator:
             Texto transcrito e traduzido
         """
         try:
-            prompt = """
-            Transcreva o áudio deste vídeo/áudio com precisão.
-            IMPORTANTE:
+            # Obter duração do áudio para incluir no prompt
+            import subprocess
+            duration_info = ""
+            try:
+                result = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                     "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    duration_sec = float(result.stdout.strip())
+                    duration_min = duration_sec / 60
+                    duration_info = f"\n        5. O áudio tem aproximadamente {duration_min:.1f} minutos. TRANSCREVA TODO O CONTEÚDO do início ao fim."
+            except:
+                pass
+            
+            prompt = f"""
+            Transcreva o áudio deste vídeo/áudio com precisão COMPLETA.
+            
+            IMPORTANTE - LEIA COM ATENÇÃO:
             1. Formate a saída EXATAMENTE como um arquivo SRT (SubRip).
             2. Inclua índices numéricos, timestamps precisos (00:00:00,000 --> 00:00:05,000) e o texto.
-            3. Se possível, quebre as legendas em frases curtas para fácil leitura.
+            3. Quebre as legendas em frases curtas (máximo 2 linhas por legenda).
+            4. TRANSCREVA O ÁUDIO INTEIRO do início até o final. NÃO pare no meio.{duration_info}
             """
+            
             if target_language:
-                prompt += f" 4. O texto das legendas DEVE ser traduzido diretamente para {target_language} brasieiro."
+                prompt += f"\n            6. O texto das legendas DEVE ser traduzido diretamente para {target_language} brasileiro."
             else:
-                prompt += " 4. Mantenha o idioma original do áudio."
-
+                prompt += "\n            6. Mantenha o idioma original do áudio."
+            
+            prompt += """
+            
+            ATENÇÃO: Não inclua nenhum texto introdutório ou explicativo.
+            Comece diretamente com "1" (o primeiro índice de legenda).
+            Não use blocos de código markdown (```).
+            """
             
             logger.info(f"Enviando áudio para Gemini: {audio_path}")
             
@@ -112,16 +155,38 @@ Apenas retorne o texto traduzido, sem comentários adicionais.
 Texto:
 {text}"""
                 
-                response = self.model.generate_content(prompt)
+                response = self.model.generate_content(prompt, request_options=self.api_options)
+                
+                # Verificar se a resposta foi bloqueada ou está vazia
+                if not response.candidates or not response.candidates[0].content.parts:
+                    block_reason = "Desconhecido"
+                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                        block_reason = response.prompt_feedback.block_reason
+                    elif response.candidates and response.candidates[0].finish_reason:
+                        block_reason = f"Finish Reason: {response.candidates[0].finish_reason}"
+                    
+                    if SKIP_BLOCKED_CONTENT:
+                        logger.warning(f"⚠️  Conteúdo bloqueado por segurança (Motivo: {block_reason}). Pulando...")
+                        return None
+                    
+                    raise ValueError(f"Resposta bloqueada ou vazia: {block_reason}")
+
                 logger.info(f"Tradução concluída: {source_language} → {target_lang_adjusted}")
                 return response.text
             
             except Exception as e:
-                logger.warning(f"Tentativa {attempt + 1}/{MAX_RETRIES} falhou: {str(e)}")
+                error_str = str(e)
+                # Skip automático para conteúdo bloqueado (complementar ao check acima)
+                if SKIP_BLOCKED_CONTENT and ("PROHIBITED_CONTENT" in error_str or "SAFETY" in error_str or "candidates is empty" in error_str):
+                    logger.warning(f"⚠️  Conteúdo bloqueado detectado no erro. Pulando...")
+                    return None
+                
+                logger.warning(f"Tentativa {attempt + 1}/{MAX_RETRIES} falhou: {error_str}")
                 if attempt < MAX_RETRIES - 1:
-                    time.sleep(RETRY_DELAY)
+                    wait_time = RETRY_DELAY * (attempt + 1)
+                    time.sleep(wait_time)
                 else:
-                    logger.error(f"Falha permanente na tradução: {str(e)}")
+                    logger.error(f"Falha permanente na tradução: {error_str}")
                     return None
     
     def translate_batch(self, texts: List[str], source_language: str, target_language: str) -> List[str]:
@@ -144,14 +209,29 @@ IMPORTANTE:
 Textos:
 {json.dumps(texts, ensure_ascii=False)}"""
                 
-                response = self.model.generate_content(prompt)
+                response = self.model.generate_content(prompt, request_options=self.api_options)
                 
+                # Verificar se a resposta foi bloqueada antes de acessar .text
+                if not response.candidates or not response.candidates[0].content.parts:
+                    block_reason = "Desconhecido"
+                    if hasattr(response, 'prompt_feedback') and response.prompt_feedback.block_reason:
+                        block_reason = response.prompt_feedback.block_reason
+                    elif response.candidates and response.candidates[0].finish_reason:
+                        block_reason = f"Finish Reason: {response.candidates[0].finish_reason}"
+                    
+                    if "PROHIBITED_CONTENT" in str(block_reason) or "SAFETY" in str(block_reason) or "8" in str(block_reason):
+                         logger.warning(f"Batch bloqueado por conteúdo sensível (Motivo: {block_reason}).")
+                         return [] # Trigger fallback individual imediato
+                    
+                    raise ValueError(f"Resposta vazia ou bloqueada: {block_reason}")
+
                 # Limpar resposta para garantir JSON válido
                 cleaned_response = response.text.strip()
                 if cleaned_response.startswith("```json"):
                     cleaned_response = cleaned_response[7:]
-                if cleaned_response.startswith("```"):
+                elif cleaned_response.startswith("```"):
                     cleaned_response = cleaned_response[3:]
+                
                 if cleaned_response.endswith("```"):
                     cleaned_response = cleaned_response[:-3]
                 
@@ -159,15 +239,22 @@ Textos:
                 
                 if len(translations) != len(texts):
                     logger.warning(f"Tamanho da resposta incorreto: {len(translations)} vs {len(texts)}")
-                    # Fallback: tentar traduzir um por um se o batch falhar na contagem
                     if attempt < MAX_RETRIES - 1:
-                        raise ValueError("Batch size mismatch")
+                        continue
                 
                 return translations
             
             except Exception as e:
-                logger.warning(f"Batch falhou (tentativa {attempt + 1}): {e}")
-                time.sleep(RETRY_DELAY * (attempt + 1))
+                error_str = str(e)
+                # Skip rápido para conteúdo bloqueado
+                if SKIP_BLOCKED_CONTENT and ("PROHIBITED_CONTENT" in error_str or "finish_reason: 8" in error_str or "SAFETY" in error_str):
+                    logger.warning(f"⚠️  Batch bloqueado por segurança. Pulando lote...")
+                    return [] # Trigger fallback individual imediato
+                    
+                logger.warning(f"Batch falhou (tentativa {attempt + 1}): {error_str}")
+                if attempt < MAX_RETRIES - 1:
+                    wait_time = RETRY_DELAY * (attempt + 1)  # Backoff exponencial
+                    time.sleep(wait_time)
         
         return []
 
@@ -181,7 +268,7 @@ Textos:
             
             srt = pysrt.SubRipFile.from_string(srt_text)
             translated_count = 0
-            batch_size = 20
+            batch_size = BATCH_SIZE  # Usar config de 20 em vez de 10
             
             logger.info(f"Traduzindo {len(srt)} legendas de {source_language} para {target_language} (Batch: {batch_size})...")
             

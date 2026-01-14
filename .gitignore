@@ -47,20 +47,13 @@ env/
 .DS_Store
 Thumbs.db
 
-# Vídeos e mídia
-videos_input/*.mp4
-videos_input/*.avi
-videos_input/*.mov
-videos_input/*.mkv
-videos_input/*.webm
-videos_input/*.flv
+# Pastas de entrada/saída
+proximos_para_traducao/
+videos_input/
+videos_output/
 
-videos_output/*.mp4
-videos_output/*.srt
-
-# Logs (mantém apenas estrutura)
-logs/*.log
-logs/*.json
+# Logs
+logs/
 
 # Arquivos temporários
 *.tmp

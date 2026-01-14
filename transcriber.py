@@ -6,13 +6,16 @@ import pysrt
 from pathlib import Path
 from typing import Optional
 from logger_config import setup_logger
-from config import INPUT_DIR, OUTPUT_DIR
+from config import INPUT_DIR, OUTPUT_DIR, WHISPER_MODEL
 from alive_progress import alive_bar
 import time
 import warnings
 
 # Suprimir aviso do Whisper sobre FP16/FP32
 warnings.filterwarnings("ignore", message="FP16 is not supported on CPU")
+
+# Desabilitar aviso de symlinks do HuggingFace (comum no Windows)
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 logger = setup_logger(__name__)
 
@@ -27,92 +30,69 @@ class AudioTranscriber:
         self.whisper_available = self._check_whisper()
     
     def _check_whisper(self) -> bool:
-        """Verifica se Whisper está instalado."""
+        """Verifica se Faster-Whisper está instalado."""
         try:
-            result = subprocess.run(
-                ["whisper", "--help"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            # Whisper retorna 0 com --help, mas erro com --version
-            if result.returncode == 0 or "whisper" in result.stderr.lower() or "usage: whisper" in result.stdout.lower():
-                logger.info("✓ Whisper encontrado e disponível")
-                return True
+            from faster_whisper import WhisperModel
+            logger.info("✓ Biblioteca Faster-Whisper encontrada")
+            return True
+        except ImportError:
+            logger.warning("⚠ Faster-Whisper não encontrada. Instale com: pip install faster-whisper")
             return False
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            logger.warning("⚠ Whisper não encontrado. Para transcrição automática, instale com: pip install openai-whisper")
-            return False
+        except Exception as e:
+            logger.warning(f"⚠ Erro ao verificar Faster-Whisper: {str(e)}")
             return False
     
     def transcribe_audio(
         self,
         video_path: str,
         language: str = "en",
-        model_size: str = "base"
+        model_size: str = WHISPER_MODEL
     ) -> Optional[str]:
         """
-        Transcreve áudio do vídeo usando Whisper.
-        
-        Args:
-            video_path: Caminho do arquivo de vídeo
-            language: Código do idioma (en, pt, es, etc.)
-            model_size: Tamanho do modelo Whisper (tiny, base, small, medium, large)
-        
-        Returns:
-            Caminho do arquivo SRT gerado ou None se falhar
+        Transcreve áudio usando Faster-Whisper (extremamente rápido no CPU).
         """
         if not self.whisper_available:
-            logger.error("Whisper não disponível. Instale com: pip install openai-whisper")
+            logger.error("Faster-Whisper não disponível.")
             return None
         
         video_name = Path(video_path).stem
         srt_output_path = os.path.join(INPUT_DIR, f"{video_name}_transcribed.srt")
         
         try:
-            logger.info(f"Transcrevendo áudio com Whisper ({model_size})...")
-            logger.info(f"Vídeo: {video_path}")
-            logger.info(f"Idioma: {language}")
+            from faster_whisper import WhisperModel
+            from utils import format_timestamp
             
-            # Comando Whisper para gerar SRT
-            cmd = [
-                "whisper",
-                video_path,
-                "--model", model_size,
-                "--language", language,
-                "--output_format", "srt",
-                "--output_dir", str(INPUT_DIR),
-                "--verbose", "False"
-            ]
+            # Para AMD/CPU no Windows, 'cpu' é a melhor opção.
+            # compute_type='int8' economiza memória e é mais rápido sem perder muita qualidade.
+            device = "cpu"
+            compute_type = "int8"
             
-            logger.info(f"Executando: {' '.join(cmd)}")
-            logger.info("Transcrevendo áudio com Whisper...")
-            logger.info("⏳ Aguarde... (isso pode levar vários minutos)")
+            logger.info(f"Iniciando transcrição com Faster-Whisper ({model_size})...")
+            logger.info(f"Modo: Otimizado para AMD/CPU (INT8)")
             
-            # Executar sem capturar output para evitar problemas de memória
-            result = subprocess.run(cmd, text=True, encoding='utf-8', errors='replace', timeout=3600)
+            model = WhisperModel(model_size, device=device, compute_type=compute_type)
             
-            if result.returncode != 0:
-                logger.error(f"Erro ao transcrever áudio (código: {result.returncode})")
-                return None
+            # beam_size=5 é o padrão equilibrado
+            segments, info = model.transcribe(video_path, language=language, beam_size=5)
             
-            # Whisper cria arquivo .srt automaticamente
-            expected_srt = os.path.join(INPUT_DIR, f"{video_name}.srt")
-            if os.path.exists(expected_srt):
-                logger.info(f"✓ Transcrição concluída: {expected_srt}")
-                return expected_srt
-            elif os.path.exists(srt_output_path):
-                logger.info(f"✓ Transcrição concluída: {srt_output_path}")
-                return srt_output_path
-            else:
-                logger.error("Arquivo SRT não foi gerado pelo Whisper")
-                return None
+            logger.info(f"Idioma: {info.language} | Duração: {info.duration:.2f}s")
+            
+            # Salvar como SRT
+            with open(srt_output_path, "w", encoding="utf-8") as f:
+                for i, segment in enumerate(segments, start=1):
+                    start = format_timestamp(segment.start)
+                    end = format_timestamp(segment.end)
+                    text = segment.text.strip()
+                    
+                    f.write(f"{i}\n")
+                    f.write(f"{start} --> {end}\n")
+                    f.write(f"{text}\n\n")
+            
+            logger.info(f"✓ Transcrição concluída: {srt_output_path}")
+            return srt_output_path
         
-        except subprocess.TimeoutExpired:
-            logger.error("Transcrição demorou muito (timeout de 1 hora)")
-            return None
         except Exception as e:
-            logger.error(f"Erro durante transcrição: {str(e)}")
+            logger.error(f"Erro durante transcrição com Faster-Whisper: {str(e)}")
             return None
     
     def create_dummy_srt_from_video(self, video_path: str) -> Optional[str]:
@@ -214,38 +194,13 @@ class VideoWithoutSubtitles:
         """
         logger.info("Analisando vídeo sem legendas...")
         
-        # Estratégia 0: Gemini (se disponível e configurado, geralmente mais rápido que Whisper CPU)
-        if gemini_translator and hasattr(gemini_translator, 'transcribe_audio_with_gemini'):
-            logger.info("🤖 Tentando transcrição direta com Gemini...")
-            # Extrair áudio para envio (Gemini aceita vídeo também, mas áudio é menor)
-            # Na verdade, o método transcribe_audio_with_gemini espera caminho de áudio ou vídeo.
-            # Vamos passar o vídeo direto.
-            
-            try:
-                # Transcrição direta para SRT
-                # Nota: language é target_language, mas aqui queremos source ou target?
-                # Se gemini traduz, já vem em pt.
-                # Assumindo que queremos EN -> PT direto.
-                # Mas o pipeline espera srt em source e depois traduz. 
-                # Porém, se o Gemini já traduz, melhor.
-                pass 
-                # A implementação no video_translator vai chamar a função se a estratégia for 'gemini'
-                return {
-                    'strategy': 'gemini_direct',
-                    'srt_path': None, # Será gerado
-                    'language': 'pt', # Já vem traduzido
-                    'method': 'Transcrição/Tradução direta com Gemini'
-                }
-            except Exception as e:
-                 logger.warning(f"Gemini transcription strategy check falhou: {e}")
-
         if prefer_whisper:
-            # Estratégia 1: Usar Whisper se disponível
-            logger.info(f"DEBUG: whisper_available = {transcriber.whisper_available}")
+            # Estratégia 1: Usar Whisper se disponível (Prioritário para melhor sincronia)
+            # logger.info(f"DEBUG: whisper_available = {transcriber.whisper_available}")
             if transcriber.whisper_available:
                 logger.info("🎙️ Iniciando transcrição com Whisper... (pode levar alguns minutos)")
-                srt_path = transcriber.transcribe_audio(video_path, language='en', model_size='base')
-                logger.info(f"DEBUG: srt_path retornado = {srt_path}")
+                srt_path = transcriber.transcribe_audio(video_path, language='en', model_size=WHISPER_MODEL)
+                # logger.info(f"DEBUG: srt_path retornado = {srt_path}")
                 if srt_path:
                     return {
                         'strategy': 'whisper_transcription',
@@ -265,7 +220,23 @@ class VideoWithoutSubtitles:
                     'language': 'en',
                     'method': 'Arquivo SRT externo encontrado'
                 }
+
+            # Estratégia 3: Gemini (Fallback - sincronia pode ser inferior)
+            if gemini_translator and hasattr(gemini_translator, 'transcribe_audio_with_gemini'):
+                logger.info("🤖 Whisper não disponível/falhou. Tentando transcrição direta com Gemini...")
+                
+                try:
+                    return {
+                        'strategy': 'gemini_direct',
+                        'srt_path': None,
+                        'language': 'pt',
+                        'method': 'Transcrição/Tradução direta com Gemini'
+                    }
+                except Exception as e:
+                        logger.warning(f"Gemini transcription strategy check falhou: {e}")
+
         else:
+             # Se não preferir Whisper, tenta External -> Whisper -> Gemini
             # Estratégia 1: Procurar SRT externo
             external_srt = transcriber.check_for_external_srt(video_path)
             if external_srt:
@@ -279,7 +250,7 @@ class VideoWithoutSubtitles:
             # Estratégia 2: Usar Whisper se disponível
             if transcriber.whisper_available:
                 logger.info("🎙️ Iniciando transcrição com Whisper... (pode levar alguns minutos)")
-                srt_path = transcriber.transcribe_audio(video_path, language='en', model_size='base')
+                srt_path = transcriber.transcribe_audio(video_path, language='en', model_size=WHISPER_MODEL)
                 if srt_path:
                     return {
                         'strategy': 'whisper_transcription',
@@ -287,6 +258,16 @@ class VideoWithoutSubtitles:
                         'language': 'en',
                         'method': 'Transcrição automática com Whisper'
                     }
+
+            # Estratégia 3: Gemini
+            if gemini_translator and hasattr(gemini_translator, 'transcribe_audio_with_gemini'):
+                logger.info("🤖 Tentando transcrição direta com Gemini...")
+                return {
+                    'strategy': 'gemini_direct',
+                    'srt_path': None,
+                    'language': 'pt',
+                    'method': 'Transcrição/Tradução direta com Gemini'
+                }
         
         # Estratégia 3: Criar template SRT (último recurso)
         logger.warning("⚠️ Whisper, Gemini e SRT externo não disponíveis ou falharam. Criando template...")

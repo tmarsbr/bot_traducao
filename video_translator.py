@@ -344,12 +344,55 @@ class VideoTranslationAgent:
             return None
     
     @staticmethod
+    def _clean_srt_content(srt_content: str) -> str:
+        """
+        Limpa a saída do Gemini removendo texto introdutório e marcadores markdown.
+        Gemini às vezes retorna: "Aqui está a transcrição...\n```srt\n1\n00:00:00..."
+        FFmpeg precisa de SRT puro começando com "1\n00:00:00..."
+        """
+        import re
+        
+        content = srt_content.strip()
+        
+        # Remover blocos de código markdown (```srt ... ``` ou ``` ... ```)
+        if "```" in content:
+            # Encontrar o conteúdo entre ``` e ```
+            match = re.search(r'```(?:srt)?\s*\n(.*?)```', content, re.DOTALL)
+            if match:
+                content = match.group(1).strip()
+            else:
+                # Se não fechou o bloco, pegar tudo após o primeiro ```
+                parts = content.split("```")
+                if len(parts) > 1:
+                    # Remover possível "srt" no início
+                    content = parts[1].strip()
+                    if content.lower().startswith("srt"):
+                        content = content[3:].strip()
+        
+        # Se ainda não começa com número, tentar encontrar onde começa o SRT real
+        lines = content.split('\n')
+        srt_start_idx = 0
+        for i, line in enumerate(lines):
+            # SRT começa com um número de sequência (1, 2, 3...)
+            if line.strip().isdigit():
+                srt_start_idx = i
+                break
+        
+        if srt_start_idx > 0:
+            content = '\n'.join(lines[srt_start_idx:])
+        
+        return content.strip()
+    
+    @staticmethod
     def _save_srt_file(srt_content: str, output_path: Path):
-        """Salva conteúdo SRT em arquivo."""
+        """Salva conteúdo SRT em arquivo, limpando formatação do Gemini."""
         try:
+            # Limpar conteúdo antes de salvar
+            cleaned_content = VideoTranslationAgent._clean_srt_content(srt_content)
+            
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with open(output_path, "w", encoding="utf-8") as f:
-                f.write(srt_content)
+                f.write(cleaned_content)
             logger.info(f"Arquivo SRT salvo: {output_path}")
         except Exception as e:
             logger.error(f"Erro ao salvar SRT: {str(e)}")

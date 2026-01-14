@@ -98,8 +98,9 @@ def get_file_size_mb(file_path: str) -> float:
 
 
 def format_timestamp(seconds: float) -> str:
-    """Converte segundos para formato HH:MM:SS."""
+    """Converte segundos para formato SRT (HH:MM:SS,mmm)."""
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    millis = int((seconds - int(seconds)) * 1000)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"

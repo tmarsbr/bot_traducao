@@ -42,6 +42,9 @@ SUPPORTED_LANGUAGES = {
 # Configurações de API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-pro-preview")
-MAX_RETRIES = 5
-RETRY_DELAY = 40
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
+MAX_RETRIES = 3
+RETRY_DELAY = 5
+BATCH_SIZE = 20
+SKIP_BLOCKED_CONTENT = True

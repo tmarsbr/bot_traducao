@@ -200,35 +200,69 @@ class VideoProcessor:
                 # Caminhos do vídeo
                 video_abs = str(Path(video_path).absolute())
                 output_abs = str(Path(output_video_path).absolute())
-                srt_abs = str(temp_srt.absolute())
+                srt_filename = temp_srt.name  # Nome relativo do arquivo
                 
-                logger.info("Embutindo legendas no vídeo...")
+                logger.info("Embutindo legendas (hard subs) no vídeo...")
+                logger.info(f"Duração estimada: {duration:.0f}s" if duration else "Duração desconhecida")
                 
-                # SOLUÇÃO: Usar soft subtitles (stream embutido) em vez de hardcoded
-                # Isso evita completamente o problema do filtro subtitles + libass no Windows
-                # As legendas ficam como uma faixa separada no MP4, selecionável pelo player
+                # HARD SUBTITLES: Queimar legendas no vídeo usando filtro subtitles
+                # Executar ffmpeg a partir do diretório do vídeo para usar caminho relativo
+                # Isso evita o problema de escape de caminhos do Windows com libass
                 cmd = [
                     "ffmpeg",
                     "-i", video_abs,
-                    "-i", srt_abs,  # Segundo input: arquivo SRT
-                    "-c:v", "copy",  # Copiar vídeo sem recodificar
-                    "-c:a", "copy",  # Copiar áudio sem recodificar
-                    "-c:s", "mov_text",  # Converter legenda para formato MP4
-                    "-map", "0:v",  # Mapear vídeo do primeiro input
-                    "-map", "0:a",  # Mapear áudio do primeiro input
-                    "-map", "1:s",  # Mapear legenda do segundo input
-                    "-metadata:s:s:0", "language=por",  # Definir idioma da legenda
-                    "-y",  # Sobrescrever
+                    "-vf", f"subtitles={srt_filename}",
+                    "-c:a", "copy",
+                    "-y",  # sobrescrever
                     output_abs
                 ]
                 
-                logger.info(f"Comando: ffmpeg -i video -i srt -c:s mov_text ...")
+                logger.info(f"Comando: ffmpeg -i video -vf subtitles={srt_filename} (cwd={video_dir})")
                 
-                # Executar ffmpeg
-                result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace')
+                # Executar ffmpeg com Popen para mostrar progresso
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    cwd=str(video_dir)  # Executar no diretório do vídeo
+                )
+                
+                # Mostrar progresso
+                if duration:
+                    from alive_progress import alive_bar
+                    import re
+                    
+                    stderr_output = []
+                    with alive_bar(int(duration), title='Encoding', bar='smooth', spinner='dots_waves') as bar:
+                        current_time = 0
+                        for line in process.stderr:
+                            stderr_output.append(line)
+                            # Procurar por "time=HH:MM:SS.xx" no output do ffmpeg
+                            time_match = re.search(r'time=(\d+):(\d+):(\d+)', line)
+                            if time_match:
+                                h, m, s = map(int, time_match.groups())
+                                new_time = h * 3600 + m * 60 + s
+                                if new_time > current_time:
+                                    bar(new_time - current_time)
+                                    current_time = new_time
+                        
+                        # Completar a barra
+                        if current_time < int(duration):
+                            bar(int(duration) - current_time)
+                    
+                    process.wait()
+                    result_stderr = ''.join(stderr_output)
+                else:
+                    # Sem duração conhecida, apenas executar
+                    _, result_stderr = process.communicate()
+                
+                result_returncode = process.returncode
                 
                 # Verificar resultado ANTES de limpar
-                if result.returncode == 0 and Path(output_video_path).exists():
+                if result_returncode == 0 and Path(output_video_path).exists():
                     logger.info(f"Vídeo com legendas salvo: {output_video_path}")
                     
                     # Limpar arquivo temporário somente após sucesso
@@ -241,7 +275,7 @@ class VideoProcessor:
                     
                     return str(output_video_path)
                 else:
-                    logger.error(f"Erro ao embutir legendas: {result.stderr}")
+                    logger.error(f"Erro ao embutir legendas: {result_stderr}")
                     # Manter o arquivo temporário para debug em caso de erro
                     logger.info(f"Arquivo SRT mantido para debug: {temp_srt}")
                     return None
