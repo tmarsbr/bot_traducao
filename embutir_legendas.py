@@ -32,7 +32,7 @@ WrapStyle: 0
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,22,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,3,2,0,2,10,10,30,1
+Style: Default,Arial,32,&H00FFFFFF,&H000000FF,&H00000000,&H80000000,0,0,0,0,100,100,0,0,3,2,0,2,10,10,30,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -120,7 +120,7 @@ def embutir_legendas(video_entrada, srt_traduzido, video_saida):
         if usa_ass:
             filtro = f"ass={temp_legenda.name}"
         else:
-            filtro = f"subtitles={temp_legenda.name}:force_style='Outline=0,BackColour=&H80000000,BorderStyle=4'"
+            filtro = f"subtitles={temp_legenda.name}:force_style='FontSize=32,Outline=0,BackColour=&H80000000,BorderStyle=4,MarginV=25'"
         
         cmd = [
             'ffmpeg',
