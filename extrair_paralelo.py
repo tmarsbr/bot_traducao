@@ -25,7 +25,7 @@ from multiprocessing import Pool, cpu_count
 from functools import partial
 
 # Importar configurações
-from config import SUBTITLES_EN_DIR, WHISPER_MODEL
+from config import SUBTITLES_EN_DIR, WHISPER_MODEL, MODELS_DIR
 
 # Configurações
 PASTA_ENTRADA = "proximos_para_traducao"
@@ -65,8 +65,10 @@ def limpar_audio_com_filtros(audio_bruto):
     audio_limpo.close()
     
     filtro = (
-        "highpass=f=80,"
-        "lowpass=f=3400,"
+        "afftdn=nr=20:nf=-30,"     # Reduce noise
+        "highpass=f=200,"          # Voice isolation (stricter)
+        "lowpass=f=3000,"
+        "loudnorm,"                # Normalization
         "aformat=channel_layouts=mono"
     )
     
@@ -152,7 +154,8 @@ def processar_video(video_path):
             return (nome_video, "error", "Filtros falharam")
         
         # 3. Carregar modelo (cada worker carrega o seu)
-        model = WhisperModel(MODELO, device=DEVICE, compute_type=COMPUTE_TYPE)
+        # Usar download_root para evitar erro de symlink
+        model = WhisperModel(MODELO, device=DEVICE, compute_type=COMPUTE_TYPE, download_root=str(MODELS_DIR))
         
         # 4. Transcrever com anti-alucinação
         vad_parameters = {
@@ -169,9 +172,12 @@ def processar_video(video_path):
             condition_on_previous_text=False,
             vad_filter=True,
             vad_parameters=vad_parameters,
-            no_speech_threshold=0.6,
-            log_prob_threshold=-1.0,
-            compression_ratio_threshold=2.4
+            # Thresholds rigorosos e Otimizações de Guia Técnico
+            no_speech_threshold=0.4,       # Mais sensível a sussurros (antes 0.6)
+            log_prob_threshold=-0.9,       # Mais "corajoso" (antes -1.0)
+            compression_ratio_threshold=2.4, # Detecta texto repetitivo
+            word_timestamps=True,          # Melhora sincronia fina
+            initial_prompt="Este é um vídeo com muitos sussurros e termos específicos." # Contexto
         )
         
         segments = list(segments)

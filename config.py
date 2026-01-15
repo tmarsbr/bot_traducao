@@ -13,6 +13,7 @@ OUTPUT_DIR = BASE_DIR / "videos_output"
 SUBTITLES_OUTPUT_DIR = OUTPUT_DIR / "subtitles_pt"
 SUBTITLES_EN_DIR = OUTPUT_DIR / "subtitles_en"
 VIDEOS_OUTPUT_DIR = OUTPUT_DIR / "videos_translated"
+MODELS_DIR = BASE_DIR / "models"
 LOGS_DIR = BASE_DIR / "logs"
 
 # Criar diretórios se não existirem
@@ -49,7 +50,7 @@ SUPPORTED_LANGUAGES = {
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GOOGLE_CLOUD_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3-flash-preview")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
 MAX_RETRIES = 3
 RETRY_DELAY = 5
 BATCH_SIZE = 20

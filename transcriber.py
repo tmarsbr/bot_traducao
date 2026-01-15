@@ -6,7 +6,7 @@ import pysrt
 from pathlib import Path
 from typing import Optional
 from logger_config import setup_logger
-from config import INPUT_DIR, OUTPUT_DIR, WHISPER_MODEL
+from config import INPUT_DIR, OUTPUT_DIR, WHISPER_MODEL, MODELS_DIR
 from alive_progress import alive_bar
 import time
 import warnings
@@ -70,10 +70,20 @@ class AudioTranscriber:
             logger.info(f"Iniciando transcrição com Faster-Whisper ({model_size})...")
             logger.info(f"Modo: Otimizado para AMD/CPU (INT8)")
             
-            model = WhisperModel(model_size, device=device, compute_type=compute_type)
+            model = WhisperModel(model_size, device=device, compute_type=compute_type, download_root=str(MODELS_DIR))
             
-            # beam_size=5 é o padrão equilibrado
-            segments, info = model.transcribe(video_path, language=language, beam_size=5)
+            # Parâmetros otimizados (Anti-Alucinação)
+            segments, info = model.transcribe(
+                video_path, 
+                language=language, 
+                beam_size=5,
+                condition_on_previous_text=False,
+                vad_filter=True,
+                vad_parameters=dict(min_speech_duration_ms=250, min_silence_duration_ms=500),
+                no_speech_threshold=0.4,
+                log_prob_threshold=-0.9,
+                word_timestamps=True
+            )
             
             logger.info(f"Idioma: {info.language} | Duração: {info.duration:.2f}s")
             

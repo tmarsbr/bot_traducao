@@ -22,8 +22,19 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+import time
 from faster_whisper import WhisperModel
-from config import SUBTITLES_EN_DIR, WHISPER_MODEL
+from config import SUBTITLES_EN_DIR, SUBTITLES_OUTPUT_DIR, VIDEOS_OUTPUT_DIR, WHISPER_MODEL, MODELS_DIR
+
+# Importar ferramentas do pipeline
+try:
+    from traduzir_com_gemini import traduzir_srt_gemini
+    from embutir_legendas_pt import embutir_legenda
+except ImportError:
+    print("⚠️ Módulos traduzir_com_gemini ou embutir_legendas_pt não encontrados!")
+    # Criar stubs para não quebrar se faltar
+    def traduzir_srt_gemini(*args): return False
+    def embutir_legenda(*args): return False
 
 # Configurações
 PASTA_ENTRADA = "proximos_para_traducao"
@@ -34,7 +45,7 @@ COMPUTE_TYPE = "int8"
 
 # Carregar modelo uma única vez
 print("⏳ Carregando modelo Whisper...")
-model = WhisperModel(MODELO, device=DEVICE, compute_type=COMPUTE_TYPE)
+model = WhisperModel(MODELO, device=DEVICE, compute_type=COMPUTE_TYPE, download_root=str(MODELS_DIR))
 print("✅ Modelo carregado!\n")
 
 def extrair_audio_bruto(video_path):
@@ -76,9 +87,11 @@ def limpar_audio_com_filtros(audio_bruto):
     # - aformat=channel_layouts=mono : converte para mono (compatível com qualquer entrada)
     
     filtro = (
-        "highpass=f=80,"           # Remove graves/humming
-        "lowpass=f=3400,"          # Remove agudos/chiados
-        "aformat=channel_layouts=mono"  # Converte para mono
+        "afftdn=nr=20:nf=-30,"     # Reduce noise
+        "highpass=f=200,"          # Voice isolation (stricter)
+        "lowpass=f=3000,"
+        "loudnorm,"                # Normalization
+        "aformat=channel_layouts=mono"
     )
     
     cmd = [
@@ -154,10 +167,12 @@ def transcrever_audio(audio_path, model):
             vad_filter=True,
             vad_parameters=vad_parameters,
             
-            # Thresholds rigorosos
-            no_speech_threshold=0.6,       # Mais rigoroso com o que é "silêncio"
-            log_prob_threshold=-1.0,       # Descarta transcrições de baixa confiança
-            compression_ratio_threshold=2.4 # Detecta texto repetitivo
+            # Thresholds rigorosos e Otimizações de Guia Técnico
+            no_speech_threshold=0.4,       # Mais sensível a sussurros (antes 0.6)
+            log_prob_threshold=-0.9,       # Mais "corajoso" (antes -1.0)
+            compression_ratio_threshold=2.4, # Detecta texto repetitivo
+            word_timestamps=True,          # Melhora sincronia fina
+            initial_prompt="Este é um vídeo com muitos sussurros e termos específicos." # Contexto
         )
         return list(segments)
     except Exception as e:
@@ -415,150 +430,134 @@ def main():
     
     # Processar sequencialmente
     resultados = {}
+    # Processar sequencialmente COMPLETO por vídeo
+    print(f"\n🚀 Iniciando Pipeline Sequencial (Extrair -> Limpar -> Traduzir -> Embutir)\n")
+    
+    total_videos = len(videos)
+    sucessos_finais = 0
+    
     for i, video in enumerate(videos, 1):
-        nome = Path(video).stem[:50]
-        print(f"[{i}/{len(videos)}] 📹 {nome}...")
+        nome_completo = Path(video).name
+        nome_video = Path(video).stem
+        print(f"[{i}/{total_videos}] 🎬 Processando: {nome_completo}")
         
-        nome_video, sucesso = extrair_srt(video)
-        resultados[nome_video] = sucesso
+        # 1. Extrair
+        _, sucesso_extracao = extrair_srt(video)
+        if not sucesso_extracao:
+            print(f"  ⏭️ Pulando etapas seguintes (Extração falhou)\n")
+            continue
+            
+        srt_en_path = os.path.join(PASTA_SAIDA, f"{nome_video}_EN.srt")
+        
+        # 2. Limpar
+        print(f"  🧹 Limpando alucinações...", end=" ", flush=True)
+        limpar_srt_unico(srt_en_path)
+        print("✓")
+        
+        # 3. Traduzir
+        srt_pt_path = os.path.join(SUBTITLES_OUTPUT_DIR, f"{nome_video}_PT.srt")
+        print(f"  🤖 Traduzindo (Gemini)...", end=" ", flush=True)
+        sucesso_traducao = traduzir_srt_gemini(srt_en_path, srt_pt_path)
+        if sucesso_traducao:
+            print("✓")
+        else:
+            print("❌ Falha na tradução")
+        
+        # 4. Embutir (apenas se tradução existiu)
+        if sucesso_traducao and os.path.exists(srt_pt_path):
+            video_final_path = os.path.join(VIDEOS_OUTPUT_DIR, f"{nome_video}_PT.mp4")
+            print(f"  📽️ Embutindo legenda...", end=" ", flush=True)
+            sucesso_embed = embutir_legenda(video, srt_pt_path, video_final_path)
+            if sucesso_embed:
+                print("✓")
+                print(f"  ✨ Vídeo finalizado: {video_final_path}")
+                sucessos_finais += 1
+            else:
+                print("❌ Falha ao embutir")
+        
+        # 5. Sleep (Cooldown)
+        if i < total_videos:
+            print(f"  💤 Aguardando 30s para o próximo vídeo...\n")
+            time.sleep(30)
     
-    # Resumo
     print("\n" + "="*70)
-    sucesso = sum(1 for v in resultados.values() if v)
-    total = len(resultados)
-    falhados = total - sucesso
-    
-    print(f"✅ Concluído: {sucesso}/{total} vídeos processados")
-    if falhados > 0:
-        print(f"⚠️  {falhados} vídeo(s) falharam (sem áudio ou formato inválido)")
+    print(f"🏁 Pipeline Finalizado: {sucessos_finais}/{total_videos} vídeos completados com sucesso!")
     print("="*70 + "\n")
-    
-    if sucesso == total:
-        print("🎉 Todos os SRTs foram extraídos com pré-processamento de áudio!")
-    else:
-        print(f"💡 Dica: Verifique se os vídeos falhados têm áudio válido")
-    
-    # Verificação final: limpar alucinações de TODOS os SRTs
-    print("\n" + "="*70)
-    print("🔍 ETAPA 2: Limpando alucinações de todos os SRTs...")
-    print("="*70 + "\n")
-    limpar_todos_srts()
-    
-    # Embutir legendas PT (se existirem)
-    print("\n" + "="*70)
-    print("🔍 ETAPA 3: Embutindo legendas PT nos vídeos...")
-    print("="*70 + "\n")
-    import subprocess
-    import sys
-    subprocess.run([sys.executable, "embutir_legendas_pt.py"], cwd=os.path.dirname(os.path.abspath(__file__)) or ".")
 
-def limpar_todos_srts():
-    """Limpa alucinações de todos os SRTs existentes na pasta de saída"""
+def limpar_srt_unico(srt_path):
+    """Limpa alucinações de um único arquivo SRT (baseado na lógica antiga)"""
     import re
     
-    srts = sorted([
-        os.path.join(PASTA_SAIDA, f)
-        for f in os.listdir(PASTA_SAIDA)
-        if f.endswith('_EN.srt')
-    ])
-    
-    corrigidos = 0
-    total_removidos = 0
-    
-    for srt in srts:
-        nome = Path(srt).stem[:45]
-        
-        # Ler SRT
-        segments = []
-        try:
-            with open(srt, 'r', encoding='utf-8') as f:
-                content = f.read()
+    if not os.path.exists(srt_path):
+        return
+
+    # Ler SRT
+    segments = []
+    try:
+        with open(srt_path, 'r', encoding='utf-8') as f:
+            content = f.read()
             
-            blocos = re.split(r'\n\n+', content.strip())
-            for bloco in blocos:
-                linhas = bloco.strip().split('\n')
-                if len(linhas) >= 3:
-                    timestamp = linhas[1]
-                    texto = '\n'.join(linhas[2:])
-                    match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})', timestamp)
-                    if match:
-                        segments.append({
-                            'start': match.group(1),
-                            'end': match.group(2),
-                            'text': texto.strip(),
-                            'text_norm': normalizar_texto(texto.strip())
-                        })
-        except:
-            continue
-        
-        if not segments:
-            continue
-        
-        # Primeiro: remover alucinações internas (ex: "oh, oh, oh, oh...")
-        segments_sem_internas = []
-        internas_removidas = 0
-        for seg in segments:
-            if eh_alucinacao_interna(seg['text']):
-                internas_removidas += 1
+        blocos = re.split(r'\n\n+', content.strip())
+        for bloco in blocos:
+            linhas = bloco.strip().split('\n')
+            if len(linhas) >= 3:
+                timestamp = linhas[1]
+                texto = '\n'.join(linhas[2:])
+                match = re.match(r'(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})', timestamp)
+                if match:
+                    segments.append({
+                        'start': match.group(1),
+                        'end': match.group(2),
+                        'text': texto.strip(),
+                        'text_norm': normalizar_texto(texto.strip())
+                    })
+    except Exception as e:
+        print(f"Erro ao ler SRT para limpeza: {e}")
+        return
+
+    if not segments:
+        return
+
+    # Primeiro: remover alucinações internas
+    segments_sem_internas = []
+    for seg in segments:
+        if not eh_alucinacao_interna(seg['text']):
+            segments_sem_internas.append(seg)
+    segments = segments_sem_internas
+
+    if not segments: # Ficou vazio
+        with open(srt_path, 'w', encoding='utf-8') as f: f.write("")
+        return
+
+    # Segundo: filtrar alucinações consecutivas
+    filtrados = []
+    i = 0
+    while i < len(segments):
+        texto_norm = segments[i]['text_norm']
+        repeticoes = 1
+        j = i + 1
+        while j < len(segments):
+            outro = segments[j]['text_norm']
+            if texto_norm == outro or (len(texto_norm) > 3 and (texto_norm in outro or outro in texto_norm)):
+                repeticoes += 1
+                j += 1
             else:
-                segments_sem_internas.append(seg)
+                break
         
-        segments = segments_sem_internas
-        
-        if not segments:
-            if internas_removidas > 0:
-                # Arquivo ficou vazio, manter apenas um placeholder
-                with open(srt, 'w', encoding='utf-8') as f:
-                    f.write("")
-                print(f"  ⚠️ {nome}... arquivo vazio após limpeza")
-                corrigidos += 1
-                total_removidos += internas_removidas
-            continue
-        
-        # Segundo: filtrar alucinações consecutivas
-        filtrados = []
-        i = 0
-        removidos = 0
-        
-        while i < len(segments):
-            texto_norm = segments[i]['text_norm']
-            repeticoes = 1
-            j = i + 1
-            while j < len(segments):
-                outro = segments[j]['text_norm']
-                if texto_norm == outro or (len(texto_norm) > 3 and (texto_norm in outro or outro in texto_norm)):
-                    repeticoes += 1
-                    j += 1
-                else:
-                    break
-            
-            if repeticoes > 2:
-                filtrados.append(segments[i])
-                removidos += repeticoes - 1
-                i = j
-            else:
-                for k in range(i, j):
-                    filtrados.append(segments[k])
-                i = j
-        
-        # Total de removidos = internas + consecutivas
-        total_removidos_arquivo = internas_removidas + removidos
-        
-        if total_removidos_arquivo > 0:
-            # Salvar SRT corrigido
-            with open(srt, 'w', encoding='utf-8') as f:
-                for idx, seg in enumerate(filtrados, 1):
-                    f.write(f"{idx}\n{seg['start']} --> {seg['end']}\n{seg['text']}\n\n")
-            print(f"  ✅ {nome}... -{total_removidos_arquivo} alucinações")
-            corrigidos += 1
-            total_removidos += total_removidos_arquivo
-    
-    print(f"\n{'='*70}")
-    if corrigidos > 0:
-        print(f"🧹 Limpeza concluída: {corrigidos} arquivos corrigidos, {total_removidos} alucinações removidas!")
-    else:
-        print(f"✨ Todos os SRTs estão limpos!")
-    print("="*70)
+        if repeticoes > 2: # Max repetições
+            filtrados.append(segments[i])
+            i = j
+        else:
+            for k in range(i, j):
+                filtrados.append(segments[k])
+            i = j
+
+    # Salvar SRT corrigido
+    with open(srt_path, 'w', encoding='utf-8') as f:
+        for idx, seg in enumerate(filtrados, 1):
+            f.write(f"{idx}\n{seg['start']} --> {seg['end']}\n{seg['text']}\n\n")
+
+
 
 if __name__ == "__main__":
     main()

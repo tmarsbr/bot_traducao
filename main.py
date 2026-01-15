@@ -13,14 +13,21 @@ def process_single_video(video_name: str, target_lang: str = 'pt'):
     # Resolver o caminho do vídeo
     video_path = Path(video_name)
     if not video_path.exists():
-        # Tentar encontrar na pasta de inputs
+        # Tentar encontrar na pasta de inputs padrão
         possible_path = VIDEOS_INPUT_DIR / video_name
+        
+        # Tentar encontrar na pasta de tradução atual
+        possible_path_2 = Path("proximos_para_traducao") / video_name
+        
         if possible_path.exists():
             video_path = possible_path
+        elif possible_path_2.exists():
+            video_path = possible_path_2
         else:
             print(f"❌ Erro: Vídeo não encontrado: {video_name}")
             print(f"   Procurei em: {video_path.absolute()}")
             print(f"   E em: {possible_path.absolute()}")
+            print(f"   E em: {possible_path_2.absolute()}")
             return
 
     agent = VideoTranslationAgent()
