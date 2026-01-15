@@ -9,6 +9,7 @@ from config import (
     SUPPORTED_LANGUAGES,
     SUPPORTED_VIDEO_FORMATS,
     OUTPUT_DIR,
+    SUBTITLES_OUTPUT_DIR,
     MAX_VIDEO_SIZE_MB,
     MAX_VIDEO_DURATION_SECONDS,
 )
@@ -96,7 +97,7 @@ class VideoTranslationAgent:
                 return None
 
             # [OTIMIZAÇÃO] Verificar se já existe tradução na pasta de saída
-            expected_output_srt = OUTPUT_DIR / f"{video_name}_{target_language}.srt"
+            expected_output_srt = SUBTITLES_OUTPUT_DIR / f"{video_name}_{target_language}.srt"
             if expected_output_srt.exists():
                 logger.info(f"⚡ Tradução existente encontrada: {expected_output_srt}")
                 logger.info("Pulando etapas de transcrição e tradução...")
@@ -148,7 +149,7 @@ class VideoTranslationAgent:
                     self.metrics.save_report(OUTPUT_DIR)
                     return None
                 
-                output_srt = OUTPUT_DIR / f"{video_name}_{target_language}.srt"
+                output_srt = SUBTITLES_OUTPUT_DIR / f"{video_name}_{target_language}.srt"
                 self._save_srt_file(translated_srt, output_srt)
                 self.metrics.complete_stage("translate")
                 
@@ -204,7 +205,7 @@ class VideoTranslationAgent:
                                 
                                 if translated_srt_content:
                                     # Salvar SRT gerado
-                                    output_srt = OUTPUT_DIR / f"{video_name}_{target_language}.srt"
+                                    output_srt = SUBTITLES_OUTPUT_DIR / f"{video_name}_{target_language}.srt"
                                     self._save_srt_file(translated_srt_content, output_srt)
                                     
                                     self.metrics.complete_stage("extract") # Considera extração e transcrição como uma etapa
@@ -247,7 +248,7 @@ class VideoTranslationAgent:
                         translated_srt = self._translate_srt_file(srt_path, target_language)
                         
                         if translated_srt:
-                            output_srt = OUTPUT_DIR / f"{video_name}_{target_language}.srt"
+                            output_srt = SUBTITLES_OUTPUT_DIR / f"{video_name}_{target_language}.srt"
                             self._save_srt_file(translated_srt, output_srt)
                             self.metrics.complete_stage("extract")
                             self.metrics.complete_stage("translate")

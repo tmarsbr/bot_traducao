@@ -10,10 +10,16 @@ BASE_DIR = Path(__file__).parent
 VIDEOS_INPUT_DIR = BASE_DIR / "videos_input"
 INPUT_DIR = VIDEOS_INPUT_DIR  # Alias para compatibilidade
 OUTPUT_DIR = BASE_DIR / "videos_output"
+SUBTITLES_OUTPUT_DIR = OUTPUT_DIR / "subtitles_pt"
+SUBTITLES_EN_DIR = OUTPUT_DIR / "subtitles_en"
+VIDEOS_OUTPUT_DIR = OUTPUT_DIR / "videos_translated"
 LOGS_DIR = BASE_DIR / "logs"
 
 # Criar diretórios se não existirem
 OUTPUT_DIR.mkdir(exist_ok=True)
+SUBTITLES_OUTPUT_DIR.mkdir(exist_ok=True)
+SUBTITLES_EN_DIR.mkdir(exist_ok=True)
+VIDEOS_OUTPUT_DIR.mkdir(exist_ok=True)
 LOGS_DIR.mkdir(exist_ok=True)
 
 # Configurações de Log

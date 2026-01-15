@@ -6,6 +6,7 @@ import shutil
 from pathlib import Path
 from typing import Optional
 from logger_config import setup_logger
+from config import VIDEOS_OUTPUT_DIR
 from utils import format_timestamp
 from alive_progress import alive_bar
 import time
@@ -174,7 +175,7 @@ class VideoProcessor:
                 return None
             
             if output_video_path is None:
-                output_video_path = video.parent / f"{video.stem}_with_subtitles{video.suffix}"
+                output_video_path = VIDEOS_OUTPUT_DIR / f"{video.stem}_with_subtitles{video.suffix}"
             
             logger.info(f"Embutindo legendas: {output_video_path}")
             
