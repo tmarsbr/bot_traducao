@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 # Carregar variáveis de ambiente
 load_dotenv()
 
+# Configurações para Windows (evita erro de symlink do HuggingFace/Whisper)
+os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
 # Diretórios
 BASE_DIR = Path(__file__).parent
 VIDEOS_INPUT_DIR = BASE_DIR / "videos_input"

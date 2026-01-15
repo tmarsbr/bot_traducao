@@ -209,11 +209,13 @@ class VideoProcessor:
                 # HARD SUBTITLES: Queimar legendas no vídeo usando filtro subtitles
                 # Executar ffmpeg a partir do diretório do vídeo para usar caminho relativo
                 # Isso evita o problema de escape de caminhos do Windows com libass
+                # force_style: Outline=0 (sem contorno), BackColour (preto com transparência 80%), BorderStyle=4 (box)
                 cmd = [
                     "ffmpeg",
                     "-i", video_abs,
-                    "-vf", f"subtitles={srt_filename}",
+                    "-vf", f"subtitles={srt_filename}:force_style='Outline=0,BackColour=&H80000000,BorderStyle=4'",
                     "-c:a", "copy",
+                    "-sn",  # Remover todas as trilhas de legenda existentes
                     "-y",  # sobrescrever
                     output_abs
                 ]

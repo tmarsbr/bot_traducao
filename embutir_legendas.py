@@ -30,6 +30,7 @@ def embutir_legendas(video_entrada, srt_traduzido, video_saida):
         '-c:a', 'copy',  # Copia áudio sem re-codificar
         '-c:s', 'mov_text',  # Codec para legendas
         '-metadata:s:s:0', 'language=por',  # Marca como português
+        '-sn',  # Remover legendas originais
         video_saida
     ]
     
