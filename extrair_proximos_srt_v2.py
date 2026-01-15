@@ -29,9 +29,9 @@ from config import SUBTITLES_EN_DIR, SUBTITLES_OUTPUT_DIR, VIDEOS_OUTPUT_DIR, WH
 # Importar ferramentas do pipeline
 try:
     from traduzir_com_gemini import traduzir_srt_gemini
-    from embutir_legendas_pt import embutir_legenda
+    from embutir_legendas import embutir_legendas as embutir_legenda
 except ImportError:
-    print("⚠️ Módulos traduzir_com_gemini ou embutir_legendas_pt não encontrados!")
+    print("⚠️ Módulos traduzir_com_gemini ou embutir_legendas não encontrados!")
     # Criar stubs para não quebrar se faltar
     def traduzir_srt_gemini(*args): return False
     def embutir_legenda(*args): return False
@@ -43,6 +43,49 @@ MODELO = WHISPER_MODEL
 DEVICE = "cpu"
 COMPUTE_TYPE = "int8"
 
+# ===== MELHORIA: Lista de alucinações conhecidas do Whisper =====
+ALUCINACOES_COMUNS = [
+    "thank you for watching",
+    "thanks for watching",
+    "subscribe to our channel",
+    "please subscribe",
+    "see you next time",
+    "stay tuned",
+    "legendas por",
+    "subtitles by",
+    "amara.org",
+    "transcribed by",
+    "captioned by",
+]
+
+def eh_alucinacao_conhecida(texto):
+    """Detecta frases comuns que o Whisper inventa em silêncios."""
+    texto_lower = texto.lower().strip()
+    return any(alu in texto_lower for alu in ALUCINACOES_COMUNS)
+
+def quebrar_legenda_netflix(texto, max_chars=42, max_linhas=2):
+    """Quebra texto seguindo padrão Netflix de legendagem (max 42 chars/linha, 2 linhas)."""
+    # Remove quebras de linha existentes
+    texto = texto.replace('\n', ' ').strip()
+    palavras = texto.split()
+    linhas = []
+    linha_atual = ""
+    
+    for palavra in palavras:
+        teste = f"{linha_atual} {palavra}".strip()
+        if len(teste) <= max_chars:
+            linha_atual = teste
+        else:
+            if linha_atual:
+                linhas.append(linha_atual)
+            linha_atual = palavra
+    
+    if linha_atual:
+        linhas.append(linha_atual)
+    
+    # Limitar a max_linhas
+    return "\n".join(linhas[:max_linhas])
+
 # Carregar modelo uma única vez
 print("⏳ Carregando modelo Whisper...")
 model = WhisperModel(MODELO, device=DEVICE, compute_type=COMPUTE_TYPE, download_root=str(MODELS_DIR))
@@ -53,11 +96,12 @@ def extrair_audio_bruto(video_path):
     audio_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     audio_tmp.close()
     
+    # MELHORIA: Usar 16kHz (sample rate nativo do Whisper) para arquivos menores e mais rápidos
     cmd = [
         'ffmpeg', '-i', video_path,
         '-acodec', 'pcm_s16le',
-        '-ar', '44100',
-        '-ac', '2',
+        '-ar', '16000',
+        '-ac', '1',
         '-v', 'error',
         '-y',
         audio_tmp.name
@@ -94,11 +138,12 @@ def limpar_audio_com_filtros(audio_bruto):
         "aformat=channel_layouts=mono"
     )
     
+    # MELHORIA: Usar 16kHz (sample rate nativo do Whisper)
     cmd = [
         'ffmpeg', '-i', audio_bruto,
         '-af', filtro,
         '-acodec', 'pcm_s16le',
-        '-ar', '44100',
+        '-ar', '16000',
         '-v', 'error',
         '-y',
         audio_limpo.name
@@ -118,10 +163,11 @@ def limpar_audio_com_filtros(audio_bruto):
     audio_limpo_fb = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     audio_limpo_fb.close()
     
+    # MELHORIA: Usar 16kHz no fallback também
     cmd_fallback = [
         'ffmpeg', '-i', audio_bruto,
         '-acodec', 'pcm_s16le',
-        '-ar', '44100',
+        '-ar', '16000',
         '-ac', '1',
         '-v', 'error',
         '-y',
@@ -309,15 +355,24 @@ def filtrar_alucinacoes(segments, max_repeticoes=2):
     return filtrados
 
 def salvar_srt(segments, output_path):
-    """Salva transcrição em SRT com filtro anti-alucinação"""
+    """Salva transcrição em SRT com filtro anti-alucinação e formatação Netflix"""
     # Primeiro, filtrar alucinações (max 2 repetições)
     segments_filtrados = filtrar_alucinacoes(segments, max_repeticoes=2)
     
     contador = 0
+    alucinacoes_removidas = 0
     with open(output_path, 'w', encoding='utf-8') as f:
         for segment in segments_filtrados:
             text = segment['text'] if isinstance(segment, dict) else segment.text.strip()
             if text:
+                # MELHORIA: Filtrar alucinações conhecidas
+                if eh_alucinacao_conhecida(text):
+                    alucinacoes_removidas += 1
+                    continue
+                
+                # MELHORIA: Aplicar quebra de linha Netflix-style (42 chars, 2 linhas)
+                text = quebrar_legenda_netflix(text, max_chars=42, max_linhas=2)
+                
                 contador += 1
                 if isinstance(segment, dict):
                     start = format_timestamp(segment['start'])
@@ -326,6 +381,9 @@ def salvar_srt(segments, output_path):
                     start = format_timestamp(segment.start)
                     end = format_timestamp(segment.end)
                 f.write(f"{contador}\n{start} --> {end}\n{text}\n\n")
+    
+    if alucinacoes_removidas > 0:
+        print(f"(removeu {alucinacoes_removidas} alucinações conhecidas)", end=" ", flush=True)
     return contador
 
 def format_timestamp(seconds):
