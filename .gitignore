@@ -63,3 +63,6 @@ logs/
 # Credenciais
 credentials.json
 service-account-*.json
+
+# Modelos (Whisper large-v3 é gigante)
+models/
