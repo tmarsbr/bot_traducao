@@ -35,11 +35,11 @@ def embutir_legendas_ffmpeg(video_path, srt_path, output_path):
         logger.error(f"SRT não encontrado: {srt_path}")
         return False
 
-    # Tratamento de caminho para FFmpeg (especialmente no Windows com : e \)
-    srt_absolute = str(Path(srt_path).absolute()).replace("\\", "/").replace(":", "\\:")
     
-    # Estilo visual profissional: Fundo opaco (BorderStyle=3)
-    estilo = "FontSize=20,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=1,Shadow=0,Alignment=2"
+    # Estilo visual profissional: Contorno tradicional (sem caixa preta)
+    # BorderStyle=1 = contorno ao redor do texto (sem caixa de fundo)
+    # Outline=2 = contorno grosso para boa legibilidade
+    estilo = "FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2"
 
     comando = [
         "ffmpeg", "-y", "-i", str(video_path),
