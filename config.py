@@ -40,7 +40,7 @@ for d in [INPUT_DIR, VIDEOS_INPUT_DIR, OUTPUT_DIR, MODELS_DIR, LOGS_DIR,
 # --- Configurações da IA ---
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "large-v3")
+WHISPER_MODEL_SIZE = os.getenv("WHISPER_MODEL", "large-v3")
 
 # --- Configurações Técnicas ---
 MAX_VIDEO_SIZE_MB = 2048

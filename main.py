@@ -4,7 +4,7 @@ import time
 from faster_whisper import WhisperModel
 from config import (
     INPUT_DIR, SUBTITLES_EN_DIR, SUBTITLES_PT_DIR, VIDEOS_FINAL_DIR,
-    MODELS_DIR, WHISPER_MODEL
+    MODELS_DIR, WHISPER_MODEL_SIZE
 )
 from core.utils import logger
 from core.transcricao import motor_transcricao
@@ -18,10 +18,10 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
     
-    logger.info(f"⚙️ Carregando Whisper ({WHISPER_MODEL}) em {device}...")
+    logger.info(f"⚙️ Carregando Whisper ({WHISPER_MODEL_SIZE}) em {device}...")
     try:
         model_faster = WhisperModel(
-            WHISPER_MODEL, device=device, compute_type=compute_type, 
+            WHISPER_MODEL_SIZE, device=device, compute_type=compute_type, 
             download_root=str(MODELS_DIR)
         )
     except Exception as e:

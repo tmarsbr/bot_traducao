@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import stable_whisper
 from faster_whisper import WhisperModel
-from config import MODELS_DIR, WHISPER_MODEL
+from config import MODELS_DIR, WHISPER_MODEL_SIZE
 from core.utils import logger, obter_duracao_video
 from core.legenda import format_timestamp, quebrar_legenda_netflix
 
@@ -47,7 +47,7 @@ def motor_transcricao(video_path, srt_saida, model_faster_instance):
             # --- STABLE-TS (Modo Seguro e Preciso) ---
             has_gpu = torch.cuda.is_available()
             model_stable = stable_whisper.load_faster_whisper(
-                WHISPER_MODEL, 
+                WHISPER_MODEL_SIZE, 
                 device="cuda" if has_gpu else "cpu",
                 compute_type="float16" if has_gpu else "int8",
                 cpu_threads=4 if has_gpu else THREADS_CPU,
